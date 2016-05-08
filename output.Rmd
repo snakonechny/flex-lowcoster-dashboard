@@ -1,0 +1,115 @@
+---
+title: "Low Cost Airlines - Dashboard"
+output: 
+  flexdashboard::flex_dashboard:
+    orientation: columns
+    vertical_layout: fill
+    runtime: shiny
+runtime: shiny
+---
+
+```{r setup, include=FALSE}
+library(flexdashboard)
+library(shiny)
+library(leaflet)
+library(d3heatmap)
+library(dplyr)
+library(tidyr)
+
+data <- read.csv('master-flights.csv', header = T)
+
+countries <-  sort(c("Poland", "Hungary", "Latvia", "Czech Republic", "Romania", "Moldova", "Serbia", "Bosnia and Herzegovina", "Bulgaria", "Ukraine", "Slovakia", "Macedonia", "Lithuania", "Slovenia", "Estonia"))
+
+
+#do a bit of formatting
+
+data$date <- as.Date(data$date, format = ('%Y-%m-%d'))
+data$day <- format(data$date, '%A')
+
+#standardize Milan as "Milano"
+data$origin.city[data$origin.city == 'Milan'] <- 'Milano'
+data$dest.city[data$dest.city == 'Milan'] <- 'Milano'
+```
+
+Analyze countries
+=====================
+
+Column {.sidebar}
+-----------------------------------------------------------------------
+
+```{r}
+
+selectInput('country', label = NULL, choices = countries)
+sliderInput('radius', label = h5('Select the radius; higher number = less detailed view'), min = 1, max = 100, value = 100, step = 5)
+
+```
+
+Column
+-----------------------------------------------------------------------------
+```{r}
+
+ renderLeaflet({
+     destinations.bycountry <- data %>% filter(dest.country == input$country) %>% group_by(origin.name, origin.city, origin.lat, origin.long) %>% summarize(count=n())
+     origins.bycountry <- data %>% filter(dest.country == input$country) %>% group_by(dest.name, dest.city, dest.lat, dest.long) %>% summarize(count=n())
+    
+     destPal <- colorNumeric(c('#ffe559', '#dd4747'), destinations.bycountry$count)
+     
+     leaflet(data = destinations.bycountry) %>% addTiles() %>% setView(lat = 48.438186, lng = 22.972389, zoom = 4) %>% 
+      addCircleMarkers(lng = ~origin.long, lat = ~origin.lat, radius = 8, color = ~destPal(count), stroke = FALSE, fillOpacity = .8, popup = ~as.character(paste(origin.name, 'Airport in', origin.city, 'receives', count, 'flights weekly from', input$country, sep = ' ')), clusterOptions = markerClusterOptions(maxClusterRadius = input$radius,
+iconCreateFunction=JS("function (cluster) {    
+      var childCount = cluster.getChildCount(); 
+      var c = ' marker-cluster-';  
+      if (childCount < 100) {  
+      c += 'large';  
+      } else if (childCount < 1000) {  
+      c += 'medium';  
+      } else { 
+      c += 'small';  
+      }    
+      return new L.DivIcon({ html: '<div><span>' + childCount + '</span></div>', className: 'marker-cluster' + c, iconSize: new L.Point(40, 40) });
+      }"))) %>%
+      addCircleMarkers(data = origins.bycountry, lng = ~dest.long, lat = ~dest.lat, radius = 8, color = '#2f576e', stroke = FALSE, fillOpacity = .8, popup = ~as.character(paste(count, 'weekly flights originate from', dest.city, 'in', input$country)), clusterOptions = markerClusterOptions(maxClusterRadius = 5)) %>%
+      addLegend('bottomright', pal = destPal, values = ~count, title = 'Number of arrivals') %>%
+      #addLegend('bottomleft', pal = originPal, values = origins.bycountry$count, title = 'Number of departures', labFormat = labelFormat()) %>%
+      addProviderTiles('CartoDB.Positron')
+                                                                                                                                                                                                                                                   })
+
+```
+
+Analyze airlines
+=====================
+
+Column (.sidebar)
+----------------------------------------------------
+
+```{r}
+selectInput('view', label = 'Select a metrics to track', choices = list('Flight frequency' = 1, 'Flight distribution' = 2, 'Competition' = 3))
+
+selectInput('airline', label = 'Select an airline to analyze', choices = levels(as.factor(data$airline)))
+
+conditionalPanel(condition = "input.view == '1'",
+                      sliderInput('showTop', label = 'Select top N destinations to view', min = 2, max = 50, step = 1, value = 25))
+                      conditionalPanel(condition = "input.view == '2'",
+                      h4('This map shows the distribution of weekly flights for any given airline.'))
+```
+
+Column
+----------------------------------------------------
+```{r}
+renderD3heatmap({
+    
+    if (input$view == 1) {
+      
+    matrixDest <- data %>% filter(airline == input$airline) %>% group_by(day, dest.city) %>% summarize(n = n()) %>% spread(day, n) %>% mutate(total = rowSums(.[, 2:8])) %>% arrange(desc(total)) %>% slice(1:input$showTop)
+    matrixDest <- matrixDest[c('dest.city','Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday')]
+    rownames(matrixDest) <- matrixDest$dest.city
+    matrixDest$dest.city <- NULL
+    d3heatmap(matrixDest, dendrogram = 'none', colors = scales::col_bin('Oranges', domain = NULL, bins = 10), scale = 'column')
+    }
+  })
+
+````
+
+
+
+
